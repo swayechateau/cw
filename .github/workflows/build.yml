@@ -1,0 +1,160 @@
+name: Build and Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build Binaries
+    env:
+      VERSION: ${{ github.ref_name }}
+      BIN_NAME: cw
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+          - name: linux-aarch64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            ext: ""
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            ext: ""
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            ext: ""
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build binary
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          BIN_NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].targets[] | select(.kind[] == "bin") | .name')
+          cp target/${{ matrix.target }}/release/$BIN_NAME ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = (cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].targets[] | select(.kind[] | index("bin")) | .name')
+          Copy-Item "target/${{ matrix.target }}/release/$bin${{ matrix.ext }}" -Destination "${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}${{ matrix.ext }}"
+
+      - name: Confirm artifact before upload (Unix)
+        if: runner.os != 'Windows'
+        run: ls -lh ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}*
+        
+      - name: Confirm artifact before upload (Windows)
+        if: runner.os == 'Windows'
+        run: ls ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}*
+        
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}
+          path: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}${{ matrix.ext }}
+
+  package-archives:
+    name: Package Archives
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+      BIN_NAME: cw
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            ext: ""
+          - name: linux-aarch64
+            ext: ""
+          - name: macos-x86_64
+            ext: ""
+          - name: macos-aarch64
+            ext: ""
+          - name: windows-x86_64
+            ext: ".exe"
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}
+          path: bin/
+
+      - name: Prepare archives
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp bin/* dist/
+          mv dist/* dist/${{ env.BIN_NAME }}${{ matrix.ext }}
+          cd dist
+
+          # Create tar.gz
+          if [ -z "${{ matrix.ext }}" ]; then
+            tar -czf ../${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}.tar.gz ${{ env.BIN_NAME }}
+          fi
+
+          # Create zip
+          zip ../${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}.zip ${{ env.BIN_NAME }}${{ matrix.ext }}
+          cd ..
+
+      - name: Upload .tar.gz
+        if: ${{ matrix.ext == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}.tar.gz
+          path: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}.tar.gz
+
+      - name: Upload .zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}.zip
+          path: ${{ env.BIN_NAME }}-${{ env.VERSION }}-${{ matrix.name }}.zip
+
+  release:
+    name: Publish GitHub Release
+    needs: package-archives
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/**/*
+
+      - name: Show release version
+        run: echo "Published release for ${{ github.ref }}"
