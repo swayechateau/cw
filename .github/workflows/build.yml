@@ -48,6 +48,16 @@ jobs:
       - if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev
 
+      - name: Install OpenSSL
+        if: matrix.name == 'macos-x86_64'
+        run: |
+          brew install openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          
+      - name: Set OPENSSL_DIR for aarch64
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        run: echo "OPENSSL_DIR=/path/to/aarch64/openssl" >> $GITHUB_ENV
+        
       - name: Build binary
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
