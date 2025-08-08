@@ -1,11 +1,6 @@
 name: Build and Package
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Version tag (e.g. v1.2.3)'
-        required: false
   push:
     tags:
       - 'v*'
@@ -14,7 +9,7 @@ jobs:
   build:
     name: Build Binaries
     env:
-      VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+      VERSION: ${{ github.ref_name }}
       BIN_NAME: cw
     strategy:
       fail-fast: false
@@ -51,39 +46,12 @@ jobs:
           target: ${{ matrix.target }}
 
       - if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
-        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev
-
-      - name: Install OpenSSL (macOS x86_64)
-        if: matrix.name == 'macos-x86_64'
-        run: |
-          brew install openssl@3
-          OPENSSL_PREFIX=$(brew --prefix openssl@3)
-          echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=$OPENSSL_PREFIX" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$OPENSSL_PREFIX/lib/pkgconfig" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=$OPENSSL_PREFIX/lib" >> $GITHUB_ENV
-
-      - name: Build OpenSSL for aarch64-unknown-linux-gnu
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu pkg-config build-essential perl
-          OPENSSL_VER=1.1.1w
-          curl -O https://www.openssl.org/source/openssl-${OPENSSL_VER}.tar.gz
-          tar -xzf openssl-${OPENSSL_VER}.tar.gz
-          cd openssl-${OPENSSL_VER}
-          ./Configure linux-aarch64 no-shared --prefix=$HOME/openssl-aarch64 --cross-compile-prefix=aarch64-linux-gnu-
-          make -j$(nproc)
-          make install_sw
-          echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=$HOME/openssl-aarch64" >> $GITHUB_ENV
-
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+        
       - name: Build binary
         env:
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          OPENSSL_DIR: ${{ env.OPENSSL_DIR }}
-          OPENSSL_NO_VENDOR: "1"
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Rename binary (Linux/macOS)
@@ -118,7 +86,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+      VERSION: ${{ github.ref_name }}
       BIN_NAME: cw
     strategy:
       fail-fast: false
